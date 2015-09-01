@@ -6,7 +6,12 @@
  *
  * Based on
  *      Raspberry Pi PCM I2S ALSA Driver
- *      Copyright (c) by Phil Poole 2013
+ *	Author:	Phil Poole
+ *		Copyright (c)  2013
+ *
+ * 	ALSA SoC I2S Audio Layer for Broadcom BCM2708 SoC
+ * 	Author:	Florian Meier <florian.meier@koalo.de>
+ *		Copyright (c) 2013
  *
  *   This driver uses DMA to transfer the data between the DMA buffer and the BCM2708 PCM peripheral.
  *
