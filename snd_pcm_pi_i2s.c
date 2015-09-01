@@ -47,7 +47,7 @@ MODULE_DESCRIPTION("Raspberry Pi PCM/I2S ALSA driver DMA version");
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{ALSA,PCM I2S}}");
 
-#define BCM2708_PERI_BASE	0x20000000
+#define BCM2708_PERI_BASE				   0x20000000
 #define GPIO_BASE			(BCM2708_PERI_BASE + 0x200000)
 #define I2S_BASE			(BCM2708_PERI_BASE + 0x203000)
 #define CLOCK_BASE			(BCM2708_PERI_BASE + 0x101000)
@@ -214,8 +214,7 @@ static int pi_i2s_pcm_open(struct snd_pcm_substream *substream) {
 	struct dma_chan *chan;
 	struct snd_pi_i2s_chip *chip = substream->private_data;
 	struct snd_pcm_runtime *rt = substream->runtime;
-
-	int filter = 2;
+	int filter[2] = {2,3}; // "tx","rx" DMA channels / DREQs
 
 	printk(KERN_INFO "pi_i2s_pcm_open: open callback\n");
 
@@ -224,17 +223,11 @@ static int pi_i2s_pcm_open(struct snd_pcm_substream *substream) {
 	printk(KERN_INFO "pi_i2s_pcm_open: Runtime hw.info=%08X, min periods=%d, max period=%d",
 			rt->hw.info, rt->hw.periods_min, rt->hw.periods_max);
 
-	chan = snd_dmaengine_pcm_request_channel(rpi_dma_filter_fn, &filter);
-
-	/* pcm_dmaengine.c implementation store only single dma_chan pointer,
-	   store dma channel locally. However, this doesn't solve the problem, the
-	   struct dmaengine_pcm_runtime_data should refactored so that both playback and capture
-	   channels could be saved */
+	chan = snd_dmaengine_pcm_request_channel(rpi_dma_filter_fn, &filter[substream->stream]);
 
 	chip->dma_chan[substream->stream] = *chan;
 
 	return snd_dmaengine_pcm_open(substream, chan);
-
 }
 
 static int pi_i2s_pcm_prepare(struct snd_pcm_substream *substream) {
@@ -523,7 +516,7 @@ static void snd_pi_i2s_unregister_all(void) {
 void setup_io(void);
 void setup_i2s(void);
 void setup_gpio(void);
-void release_the_hounds(void);
+void i2s_release(void);
 void remap_io_addresses(void);
 
 void remap_io_addresses() {
@@ -617,9 +610,9 @@ void setup_i2s(void) {
 			| 8 << 16 | 0 << 15 | 1 << 14 | 33 << 4 | 8;
 
 	//Set frame length and frame sync length (32 and 16), and set FTXP=1 and FRXP=1 so I can inject 2 channels into a single 32 bit word
-	*(i2s_registers + BCM2835_PCM_MODE_A_REG) = 3 << 24 | 63<<10 | 32;
-
-	//*(i2s_registers+BCM2835_PCM_MODE_A_REG) = get_mode();
+	//*(i2s_registers + BCM2835_PCM_MODE_A_REG) = 3 << 24 | 63<<10 | 32;
+	//*(i2s_registers + BCM2835_PCM_MODE_A_REG) = 0x03507c10;
+	*(i2s_registers+BCM2835_PCM_MODE_A_REG) = get_mode();
 
 	udelay(50);
 
@@ -689,7 +682,7 @@ void setup_i2s(void) {
 int get_mode() {
 	int mode;
 	int data_length = 16;
-	int bclk_ratio = 50;
+	int bclk_ratio = 64;
 	int fmt = (SND_SOC_DAIFMT_CBS_CFS | SND_SOC_DAIFMT_NB_NF);
 
 	/* Setup the I2S mode */
@@ -769,7 +762,7 @@ int get_mode() {
 		printk(KERN_INFO "error in 2nd mode setting\n");
 		break;
 	}
-	printk(KERN_INFO "get_mode: mode is %08X\n", mode);
+	printk(KERN_INFO "get_mode: mode is 0x%08X\n", mode);
 
 	return mode;
 }
@@ -795,7 +788,7 @@ void bcm2835_pcm_disable_playback() {
 	*(i2s_registers + BCM2835_PCM_CS_A_REG) &= ~(1 << 2);
 }
 
-void release_the_hounds(void) {
+void i2s_release(void) {
 	*(i2s_registers + BCM2835_PCM_INTSTC_A_REG) = 0x000F; // clear status bits
 	*(i2s_registers + BCM2835_PCM_INTEN_A_REG) = 0x00;
 	*(i2s_registers + BCM2835_PCM_CS_A_REG) &= ~(1 << 24);
@@ -813,10 +806,6 @@ static int __init alsa_card_pi_i2s_init(void) {
 	int err;
 
 	err = platform_driver_register(&snd_pi_i2s_driver);
-	if (err < 0)
-		return err;
-
-	err = 0; // alloc_buffers();
 
 	if (err < 0) {
 		platform_driver_unregister(&snd_pi_i2s_driver);
@@ -826,13 +815,15 @@ static int __init alsa_card_pi_i2s_init(void) {
 	snd_pi_i2s_device = platform_device_register_simple("snd_pi_i2s_pcm", 1,
 			NULL, 0);
 	setup_io();
+
 	printk(KERN_INFO "alsa_card_pi_i2s_init: driver initialized\n");
+
 	return 0;
 }
 
 static void __exit alsa_card_pi_i2s_exit(void) {
 	snd_pi_i2s_unregister_all();
-	release_the_hounds();
+	i2s_release();
 
 	return;
 }
